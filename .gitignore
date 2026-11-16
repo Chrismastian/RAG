@@ -1,0 +1,20 @@
+# Rahasia — jangan pernah commit
+.env
+
+# Virtual environment
+venv/
+.venv/
+
+# ChromaDB persistent store (data lokal hasil embedding)
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Log hasil uji keamanan (boleh di-commit manual kalau mau dijadikan bukti portofolio)
+logs/*.json
+
+# OS/editor
+.DS_Store
+.vscode/
