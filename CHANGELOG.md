@@ -23,6 +23,26 @@ Setiap fase pengembangan sistem ini dicatat sebagai satu entri di sini, sesuai `
 - Hasil uji prompt injection lengkap: `logs/security_test_results.json` (di-gitignore secara default — commit manual kalau ingin dijadikan bukti portofolio)
 - Heuristik otomatis di `security_test.py` sempat salah menandai skenario role-manipulation sebagai "kemungkinan bypass" padahal bot menjawab dengan benar — lihat README bagian Security Considerations untuk detail
 
+## [v0.2-webhook-agent] — Fase 2: Secure Webhook Agent — 2026-11-21
+
+### Ditambahkan
+- `src/webhook_server.py` — server FastAPI dengan endpoint `POST /ask` (dilindungi token + rate limit) dan `GET /health` (tanpa token). Membungkus `RagChatBot` dari Fase 1, bukan menulis ulang logika RAG.
+- `src/test_webhook_security.py` — uji lapisan HTTP (token salah/hilang → 401, rate limit terlampaui → 429) pakai FastAPI TestClient, tidak perlu server benar-benar berjalan
+
+### Dimodifikasi
+- `requirements.txt` — tambah `fastapi`, `uvicorn[standard]`
+- `.env.example` — tambah `WEBHOOK_API_TOKEN`
+- `README.md` — tambah diagram arsitektur Fase 2, baris Security Considerations untuk token validation & rate limiting, langkah menjalankan webhook + setup n8n
+- **Tidak diubah sama sekali:** `rag_chat.py`, `llm_fallback.py`, `embed_index.py`, `security_test.py` — bukti nyata prinsip reuse dari Fase 1
+
+### Skill yang dikuasai di fase ini
+- **Automation:** webhook trigger & HTTP Request node di n8n, expose server lokal ke internet lewat ngrok (karena n8n Cloud tidak bisa menjangkau `localhost`)
+- **Security:** validasi token tahan *timing attack* (`secrets.compare_digest()` vs `==`), rate limiting sliding-window in-memory, menguji lapisan HTTP terpisah dari lapisan RAG
+
+### Catatan
+- Rate limit saat ini berlaku global (1 token valid, belum per-user) — jadi relevan dipersempit lagi setelah Fase 3 punya konsep role/multi-user
+- `bot = RagChatBot()` dibuat sekali saat proses server start (bukan per-request) — artinya `embed_index.py` **wajib** sudah dijalankan dulu sebelum `webhook_server.py` dinyalakan, kalau belum, server gagal start dengan `RuntimeError` yang jelas
+
 ---
 
 <!--

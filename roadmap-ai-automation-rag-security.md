@@ -6,6 +6,41 @@ Fokus: membangun **satu sistem AI yang terus bertumbuh** — cepat (automation),
 
 ---
 
+## Status Proyek Saat Ini
+
+> Bagian ini sengaja ditaruh di paling atas supaya kalau percakapan ini dimulai ulang dari chat baru (misal di sesi lain), cukup lampirkan file ini untuk memberi konteks penuh tanpa perlu mengulang histori chat.
+
+**Nama folder/repo:** `project-01-rag-faq-bot` (nama masih bisa diganti kapan saja lewat GitHub Settings, belum diputuskan final)
+
+**Fase 1 — Fondasi RAG:** ✅ Selesai dibangun, diuji (3 skenario prompt injection, hasil tercatat), dan pemahamannya sudah diverifikasi lewat kuis mandiri (8 soal, semua konsep inti terjawab).
+
+**Fase 2 — Secure Webhook Agent:** ✅ Kode sudah dibangun lengkap (`webhook_server.py` + `test_webhook_security.py`), logikanya sudah diverifikasi lewat uji terisolasi. **Belum** dijalankan end-to-end oleh user dengan n8n/ngrok sungguhan — itu langkah praktik yang masih perlu dilakukan sebelum fase ini benar-benar ditutup (push + git tag `v0.2-webhook-agent`).
+
+**Fase 3–7:** Belum dimulai.
+
+**File yang sudah ada di repo saat ini:**
+```
+project-01-rag-faq-bot/
+├── README.md, CHANGELOG.md, roadmap-ai-automation-rag-security.md (file ini)
+├── .env.example, .gitignore, requirements.txt
+├── data/kebijakan_kerja_jarak_jauh.md
+└── src/
+    ├── embed_index.py, llm_fallback.py, rag_chat.py, security_test.py   (Fase 1)
+    └── webhook_server.py, test_webhook_security.py                      (Fase 2)
+```
+
+**Keputusan teknis penting yang sudah diambil** (supaya tidak perlu diulang kalau ditanyakan lagi):
+- Model LLM default: Groq → `openai/gpt-oss-120b`, Cerebras → `qwen-3.8-27b` (keduanya sudah diverifikasi ke dokumentasi resmi masing-masing per November 2026, menggantikan model lama yang ternyata sudah deprecated)
+- Token webhook divalidasi dengan `secrets.compare_digest()`, bukan `==` (tahan timing attack)
+- Rate limit webhook: in-memory sliding window, 10 request/60 detik, per-token (saat ini praktis global karena baru 1 token)
+- **Belum pernah benar-benar di-`git push`** ke GitHub oleh user — repo masih lokal
+
+**Yang belum diputuskan / masih jadi pertanyaan terbuka:**
+- Nama final repo (tetap `project-01-rag-faq-bot` atau rename)
+- Kapan mulai setup akun n8n Cloud + ngrok untuk uji Fase 2 end-to-end
+
+---
+
 ## Setup Awal (Tanpa Docker — Cocok untuk Laptop Low-End)
 
 Docker memang berat untuk laptop spek rendah. Kabar baiknya: untuk stack yang kita pakai, Docker **tidak wajib**. Setup ini dipakai dari Fase 1 sampai Fase 7 — tidak berubah sepanjang roadmap.
@@ -82,16 +117,64 @@ Setiap fase **wajib** meng-update `README.md` (bagian Arsitektur dan Security Co
 - **Skill RAG:** chunking dokumen, embedding lokal (sentence-transformers), retrieval, prompt grounding
 - **Skill Security:** API key di environment variable, sanitasi input dasar, 3 uji prompt injection dasar
 - **File inti yang dihasilkan:** `src/embed_index.py`, `src/llm_fallback.py`, `src/rag_chat.py`, `src/security_test.py`
-- **Status:** sudah dibangun, diuji, dan siap/sudah di-push ke GitHub.
+- **Status:** kode sudah dibangun, diuji (termasuk 3 skenario prompt injection — hasil tercatat di README & `CHANGELOG.md`), dan pemahaman sudah diverifikasi lewat kuis mandiri. Siap dipakai sebagai fondasi Fase 2.
 
 ## Fase 2 — + Secure Webhook Agent
-**Tujuan:** Menghubungkan automation (n8n) ke bot RAG yang **sudah ada**, bukan membangun bot baru.
+**Tujuan:** Menghubungkan automation (n8n) ke bot RAG yang **sudah ada**, bukan membangun bot baru. `RagChatBot` dari Fase 1 cuma dibungkus endpoint HTTP — logika RAG-nya sendiri tidak disentuh.
 
-- **Skill Automation:** webhook trigger, routing, response handling di n8n
-- **Skill RAG:** `src/webhook_server.py` **meng-import langsung** `RagChatBot` dari `rag_chat.py` Fase 1 — tidak ada logika RAG yang ditulis ulang
-- **Skill Security:** access control dasar (token/API key validation sebelum request diproses), rate limiting sederhana
-- **Tools:** n8n Cloud, Python (API server kecil via FastAPI/Flask)
-- **Deliverable:** Workflow n8n yang menerima pertanyaan via webhook, diproses oleh bot Fase 1 yang sama persis, dibalas dengan autentikasi token
+### Arsitektur Fase 2
+
+```
+┌──────────────┐      HTTPS POST       ┌───────────────────────┐
+│  n8n Cloud   │  (header: token)      │  webhook_server.py     │
+│  (webhook    │──────────────────────▶│  1. validasi token     │
+│   trigger)   │                       │  2. cek rate limit     │
+│              │◀──────────────────────│  3. panggil            │
+└──────────────┘      JSON response    │     RagChatBot.answer()│──┐
+                                        └───────────────────────┘  │
+                                                                    ▼
+                                                         (logika Fase 1: sanitasi →
+                                                          retrieval → grounding →
+                                                          llm_fallback, TIDAK berubah)
+```
+
+### File yang Ditambahkan/Diubah
+- **Baru:** `src/webhook_server.py` — server HTTP kecil (FastAPI), satu endpoint `POST /ask`
+- **Diubah:** `.env.example` — tambah `WEBHOOK_API_TOKEN=` (token yang dipakai n8n untuk otentikasi)
+- **Diubah:** `requirements.txt` — tambah `fastapi` dan `uvicorn`
+- **Tidak diubah sama sekali:** `rag_chat.py`, `llm_fallback.py`, `embed_index.py` — ini pembuktian nyata prinsip reuse
+
+### Rincian Skill
+
+**Automation (n8n):**
+1. Daftar n8n Cloud (gratis), buat workflow baru
+2. Tambah node **Webhook** (trigger) — catat URL yang dihasilkan
+3. Tambah node **HTTP Request** yang memanggil `webhook_server.py` kamu, kirim header `Authorization: Bearer <WEBHOOK_API_TOKEN>`
+4. **Kendala yang wajib diantisipasi:** n8n Cloud berjalan di server mereka, jadi **tidak bisa menjangkau `localhost` di laptop kamu**. Dua opsi:
+   - **Untuk belajar/testing cepat:** `ngrok http 8000` (gratis, instan) — bikin URL publik sementara yang meneruskan ke server lokal
+   - **Untuk deliverable yang lebih tahan lama:** deploy `webhook_server.py` ke free tier Render.com atau Railway.app (keduanya punya paket gratis untuk API kecil)
+
+**RAG (reuse, bukan tulis ulang):**
+```python
+# src/webhook_server.py (kerangka)
+from fastapi import FastAPI, Header, HTTPException
+from rag_chat import RagChatBot   # import langsung, tidak ada duplikasi logika
+
+app = FastAPI()
+bot = RagChatBot()   # dibuat sekali saat server start, dipakai ulang tiap request
+```
+
+**Security — dua konsep baru yang perlu dikuasai di fase ini:**
+- **Token validation yang aman dari timing attack:** jangan bandingkan token dengan `token == expected_token` biasa (operator `==` Python bisa dieksploitasi lewat *timing attack* karena berhenti di karakter pertama yang beda). Pakai `secrets.compare_digest(token, expected_token)` yang waktu eksekusinya konstan tidak peduli di mana perbedaannya.
+- **Rate limiting sederhana:** dictionary in-memory `{token: [timestamp_request]}`, tolak kalau jumlah request dalam N detik terakhir melebihi batas. **Batasan yang jujur diakui (gaya README Fase 1):** in-memory berarti counter reset kalau server restart, dan tidak sinkron kalau nanti dijalankan multi-instance — cukup untuk portofolio single-instance, bukan untuk production skala besar (itu butuh Redis, di luar cakupan fase ini).
+
+### Uji Keamanan Tambahan di Fase Ini
+Perluas `security_test.py` dengan 2 skenario baru khusus webhook:
+1. Request tanpa token / token salah → harus ditolak dengan HTTP 401, bukan diproses
+2. Request melebihi rate limit → harus ditolak dengan HTTP 429
+
+### Deliverable
+Workflow n8n yang menerima pertanyaan via webhook, diproses oleh `RagChatBot` Fase 1 yang **sama persis** (bisa dibuktikan dengan diff: `rag_chat.py` tidak berubah), dibalas dengan autentikasi token — plus entri baru di `CHANGELOG.md` (`v0.2-webhook-agent`) dan README yang diupdate.
 
 ## Fase 3 — + Multi-Source RAG dengan Role-Based Access
 **Tujuan:** Memperluas retrieval dari satu dokumen jadi banyak dokumen dengan kontrol akses bertingkat — modifikasi langsung ke `embed_index.py` dan `rag_chat.py` yang sudah ada, bukan sistem baru.
