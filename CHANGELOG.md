@@ -45,6 +45,24 @@ Setiap fase pengembangan sistem ini dicatat sebagai satu entri di sini, sesuai `
 
 ---
 
+## v0.3-multi-source-rbac — Fase 3: Multi-Source RAG dengan Role-Based Access
+
+**Ditambahkan**
+- `src/access_control.py`: sumber tunggal aturan akses (role penanya -> tag dokumen yang boleh dilihat)
+- `data/sources_manifest.json`: pelabelan tiap dokumen (`all` / `hr_only`)
+- `data/info_gaji_karyawan.md`: dokumen sensitif fiktif untuk simulasi
+- 4 skenario uji data leakage lintas-role di `security_test.py`
+
+**Diubah**
+- `embed_index.py`: indexing multi-dokumen berbasis manifest, metadata `role` per chunk, file tak berlabel dilewati (fail-closed)
+- `rag_chat.py`: `retrieve()` dan `answer()` menerima `role`; filter `where` diterapkan di ChromaDB
+
+**Tidak diubah:** `llm_fallback.py`, inti `webhook_server.py`
+
+**Skill:** metadata filtering (RAG), least privilege & fail-closed (security)
+**Risiko yang ditangani:** data leakage lintas-role. Data sensitif tidak pernah masuk prompt LLM untuk role yang tidak berhak.
+**Batasan yang diakui:** role masih berupa parameter tepercaya; belum ada autentikasi per-pengguna. Webhook belum meneruskan role (default `employee`).
+
 <!--
 Template entri untuk fase berikutnya:
 

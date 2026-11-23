@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
 from llm_fallback import generate_answer, AllProvidersFailedError
+from access_control import DEFAULT_ROLE, get_visible_roles, normalize_role
 
 # --- Konfigurasi ---
 CHROMA_DIR = str(Path(__file__).parent.parent / "chroma_db")
@@ -106,21 +107,30 @@ class RagChatBot:
                 "terlebih dahulu untuk membangun index."
             ) from exc
 
-    def retrieve(self, query: str, top_k: int = TOP_K) -> list[str]:
+    def retrieve(self, query: str, role: str | None = DEFAULT_ROLE, top_k: int = TOP_K) -> list[str]:
+        """
+        Ambil chunk paling relevan, HANYA dari dokumen yang boleh dilihat `role`.
+        Penyaringan terjadi di level ChromaDB (where clause): chunk yang tidak
+        berhak dilihat tidak pernah keluar dari database, jadi tidak mungkin
+        sampai ke prompt LLM.
+        """
+        visible_tags = get_visible_roles(role)   # contoh: employee -> ["all"]
         query_embedding = self.embedder.encode([query], convert_to_numpy=True)
         results = self.collection.query(
             query_embeddings=query_embedding.tolist(),
             n_results=top_k,
+            where={"role": {"$in": visible_tags}},
         )
         return results["documents"][0] if results["documents"] else []
 
-    def answer(self, question: str) -> dict:
+    def answer(self, question: str, role: str | None = DEFAULT_ROLE) -> dict:
         clean_question, warnings = sanitize_input(question)
+        effective_role = normalize_role(role)
 
         if not clean_question:
-            return {"answer": "Pertanyaan kosong setelah sanitasi.", "provider": None, "warnings": warnings, "context": []}
+            return {"answer": "Pertanyaan kosong setelah sanitasi.", "provider": None, "warnings": warnings, "context": [], "role": effective_role}
 
-        context_chunks = self.retrieve(clean_question)
+        context_chunks = self.retrieve(clean_question, role=effective_role)
         context_text = "\n\n---\n\n".join(context_chunks) if context_chunks else "(tidak ada konteks relevan ditemukan)"
 
         user_prompt = (
@@ -143,11 +153,16 @@ class RagChatBot:
             "provider": provider,
             "warnings": warnings,
             "context": context_chunks,
+            "role": effective_role,
         }
 
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
+
+    # Pemakaian: python src/rag_chat.py        -> role employee (default)
+    #            python src/rag_chat.py hr     -> role hr
+    role = normalize_role(sys.argv[1] if len(sys.argv) > 1 else None)
 
     try:
         bot = RagChatBot()
@@ -156,6 +171,7 @@ def main() -> None:
         sys.exit(1)
 
     print("\n=== RAG FAQ Bot — Kebijakan Kerja Jarak Jauh ===")
+    print(f"Role aktif: {role}")
     print("Ketik pertanyaan kamu, atau 'exit' untuk keluar.\n")
 
     while True:
@@ -171,7 +187,7 @@ def main() -> None:
         if not question:
             continue
 
-        result = bot.answer(question)
+        result = bot.answer(question, role=role)
 
         if result["warnings"]:
             print(f"[peringatan sanitasi: {'; '.join(result['warnings'])}]")
