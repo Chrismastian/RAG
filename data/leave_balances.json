@@ -1,0 +1,5 @@
+{
+  "emp-001": {"annual_quota": 14, "used": 5},
+  "emp-002": {"annual_quota": 14, "used": 12},
+  "hr-001":  {"annual_quota": 14, "used": 0}
+}

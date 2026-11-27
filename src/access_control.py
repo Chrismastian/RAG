@@ -26,6 +26,10 @@ ROLE_VISIBILITY: dict[str, list[str]] = {
 }
 
 
+# Fase 4: role yang boleh MENYETUJUI aksi berisiko yang diajukan agent.
+APPROVER_ROLES = frozenset({"hr"})
+
+
 def normalize_role(role: str | None) -> str:
     """Role kosong atau tidak dikenal -> DEFAULT_ROLE (paling rendah)."""
     if role is None:
@@ -37,6 +41,11 @@ def normalize_role(role: str | None) -> str:
 def get_visible_roles(role: str | None) -> list[str]:
     """Daftar tag dokumen yang boleh dilihat oleh role ini."""
     return list(ROLE_VISIBILITY[normalize_role(role)])
+
+
+def can_approve(role: str | None) -> bool:
+    """True kalau role ini berhak menyetujui aksi berisiko (Fase 4)."""
+    return normalize_role(role) in APPROVER_ROLES
 
 
 if __name__ == "__main__":

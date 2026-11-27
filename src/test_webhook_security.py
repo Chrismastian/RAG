@@ -33,7 +33,7 @@ TEST_TOKEN = "token-uji-coba-fase2"
 # butuh koneksi internet -- yang diuji DI SINI adalah lapisan webhook (token +
 # rate limit), bukan kualitas jawaban RAG (itu sudah diuji terpisah di
 # security_test.py lewat RagChatBot langsung).
-webhook_server.bot.answer = lambda question: {
+webhook_server.bot.answer = lambda question, role=None: {
     "answer": "(jawaban dummy untuk uji webhook)",
     "provider": "dummy",
     "warnings": [],

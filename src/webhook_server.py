@@ -23,20 +23,20 @@ Panggil endpoint:
 
 from __future__ import annotations
 
-import os
-import secrets
+
 import time
 from collections import defaultdict, deque
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
+from auth import Identity, authenticate
 
 from rag_chat import RagChatBot
 
 load_dotenv()
 
-WEBHOOK_API_TOKEN = os.environ.get("WEBHOOK_API_TOKEN", "").strip()
+
 
 # Catatan desain: karena baru ada SATU token yang valid (belum multi-user/role
 # seperti Fase 3), rate limit di bawah ini pada praktiknya berlaku global untuk
@@ -76,31 +76,16 @@ def _check_rate_limit(token: str) -> bool:
     return True
 
 
-def _extract_and_validate_token(authorization: str | None) -> str:
-    """
-    Validasi header Authorization, kembalikan token kalau valid.
-    Melempar HTTPException (401/500) kalau tidak valid -- FastAPI otomatis
-    mengubah exception ini jadi response HTTP dengan status code yang sesuai.
-    """
-    if not WEBHOOK_API_TOKEN:
-        raise HTTPException(
-            status_code=500,
-            detail="WEBHOOK_API_TOKEN belum diset di server (.env) -- ini salah konfigurasi server, bukan salah client",
-        )
-
+def _authenticate_request(authorization: str | None) -> Identity:
+    """Header Authorization -> Identity yang ditentukan SERVER. Fail-closed."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Header 'Authorization: Bearer <token>' wajib ada")
 
-    provided_token = authorization[len("Bearer "):].strip()
-
-    # secrets.compare_digest(): waktu eksekusinya KONSTAN tidak peduli di mana
-    # perbedaan karakternya. Operator '==' biasa bisa dieksploitasi lewat
-    # timing attack karena ia berhenti membandingkan di karakter pertama yang beda,
-    # sehingga attacker bisa menebak token karakter-per-karakter dari selisih waktu respons.
-    if not secrets.compare_digest(provided_token, WEBHOOK_API_TOKEN):
+    token = authorization[len("Bearer "):].strip()
+    identity = authenticate(token)   # perbandingan constant-time ada di auth.py
+    if identity is None:
         raise HTTPException(status_code=401, detail="Token tidak valid")
-
-    return provided_token
+    return identity
 
 
 class AskRequest(BaseModel):
@@ -112,19 +97,27 @@ class AskResponse(BaseModel):
     provider: str | None
     warnings: list[str]
 
+class AskResponse(BaseModel):
+    answer: str
+    role: str
+    provider: str | None
+    warnings: list[str]
+
 
 @app.post("/ask", response_model=AskResponse)
 def ask(payload: AskRequest, authorization: str | None = Header(default=None)):
-    token = _extract_and_validate_token(authorization)
+    identity = _authenticate_request(authorization)
 
-    if not _check_rate_limit(token):
+    # Rate limit sekarang PER USER (key = user_id), bukan global per-token.
+    if not _check_rate_limit(identity.user_id):
         raise HTTPException(status_code=429, detail="Rate limit terlampaui, coba lagi nanti")
 
-    # --- Reuse penuh logika Fase 1: sanitasi -> retrieval -> grounding -> fallback LLM ---
-    result = bot.answer(payload.question)
+    # Role datang dari identity (hasil validasi token), BUKAN dari body request.
+    result = bot.answer(payload.question, role=identity.role)
 
     return AskResponse(
         answer=result["answer"],
+        role=identity.role,
         provider=result["provider"],
         warnings=result["warnings"],
     )

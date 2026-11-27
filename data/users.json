@@ -1,0 +1,7 @@
+{
+  "users": [
+    {"user_id": "emp-001", "name": "Budi Santoso",   "role": "employee", "token_env": "TOKEN_EMP_001"},
+    {"user_id": "emp-002", "name": "Sari Wulandari", "role": "employee", "token_env": "TOKEN_EMP_002"},
+    {"user_id": "hr-001",  "name": "Rina Marlina",   "role": "hr",       "token_env": "TOKEN_HR_001"}
+  ]
+}

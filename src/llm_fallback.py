@@ -40,6 +40,7 @@ class ProviderConfig:
     env_key: str
     base_url: str
     model: str
+    supports_tools: bool = True   # Fase 4: boleh dipakai untuk tool calling?
 
 
 # Urutan di list ini = urutan prioritas fallback.
@@ -70,6 +71,7 @@ PROVIDERS: list[ProviderConfig] = [
         base_url="https://openrouter.ai/api/v1/chat/completions",
         # Dikonfirmasi masih aktif & gratis di openrouter.ai per pengecekan terakhir.
         model="meta-llama/llama-3.3-70b-instruct:free",
+        supports_tools=False,  # Fase 4: model :free sering tak konsisten soal tool calling
     ),
     ProviderConfig(
         name="mistral",
@@ -168,6 +170,87 @@ def generate_answer(
 
     raise AllProvidersFailedError(
         "Semua provider gagal atau API key kosong.\n" + "\n".join(errors)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fase 4: tool calling
+# ---------------------------------------------------------------------------
+
+def _call_with_tools(
+    provider: ProviderConfig,
+    api_key: str,
+    messages: list[dict],
+    tools: list[dict],
+    temperature: float,
+    max_tokens: int,
+    timeout: int,
+) -> dict:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": provider.model,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",   # model sendiri yang memutuskan: jawab langsung atau panggil tool
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    response = requests.post(
+        provider.base_url, headers=headers, json=payload, timeout=timeout
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"{provider.name} -> HTTP {response.status_code}: {response.text[:300]}"
+        )
+
+    try:
+        message = response.json()["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"{provider.name} -> format respons tak terduga") from exc
+
+    # Hanya ambil dua field yang kita perlukan. Field lain (mis. "reasoning" dari
+    # model penalaran) sengaja dibuang supaya tidak ikut terkirim balik ke provider lain.
+    return {
+        "content": message.get("content") or "",
+        "tool_calls": message.get("tool_calls") or [],
+    }
+
+
+def chat_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    temperature: float = 0.0,
+    max_tokens: int = 1200,
+    timeout: int = 45,
+) -> tuple[dict, str]:
+    """
+    Satu putaran panggilan LLM yang boleh meminta tool call, dengan fallback antar provider.
+    Mengembalikan ({"content": str, "tool_calls": list}, nama_provider).
+    """
+    errors: list[str] = []
+
+    for provider in PROVIDERS:
+        if not provider.supports_tools:
+            continue
+        api_key = os.environ.get(provider.env_key, "").strip()
+        if not api_key:
+            continue
+        try:
+            logger.info("Tool-calling via provider: %s", provider.name)
+            result = _call_with_tools(
+                provider, api_key, messages, tools, temperature, max_tokens, timeout
+            )
+            return result, provider.name
+        except Exception as exc:  # noqa: BLE001 - lanjut ke provider berikutnya
+            errors.append(str(exc))
+            logger.warning("Provider %s gagal (tool calling): %s", provider.name, exc)
+
+    raise AllProvidersFailedError(
+        "Tidak ada provider ber-tool-calling yang berhasil.\n" + "\n".join(errors)
     )
 
 
